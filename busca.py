@@ -76,8 +76,9 @@ def render_pagina_busca():
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Resultados", fmt_numero(total))
     c2.metric("Total no Banco", fmt_numero(contar_registros()))
-    c3.metric("Valor Total (página)", fmt_moeda(df["valor_total"].sum()) if not df.empty else "—")
-    cessoes = int(df["ocupacao"].apply(eh_cessao).sum()) if not df.empty else 0
+    vt = pd.to_numeric(df["valor_total"], errors="coerce").sum() if (not df.empty and "valor_total" in df.columns) else 0
+    c3.metric("Valor Total (página)", fmt_moeda(vt))
+    cessoes = int(df["ocupacao"].apply(eh_cessao).sum()) if (not df.empty and "ocupacao" in df.columns) else 0
     c4.metric("🔄 Cessões (página)", cessoes)
 
     st.markdown("---")
@@ -89,8 +90,8 @@ def render_pagina_busca():
     # ── Tabela com TODOS os campos relevantes ─────────────────────────────────
     st.markdown(f"### Resultados — página {st.session_state.pagina_atual + 1}")
 
-    # Prepara colunas para exibição
-    df_show = df[[
+    # Prepara colunas para exibição — só inclui colunas que existem no df
+    colunas_desejadas = [
         "id", "rip", "rip_utilizacao",
         "municipio", "estado",
         "endereco",
@@ -99,7 +100,9 @@ def render_pagina_busca():
         "valor_total",
         "area_terreno", "area_construida",
         "obs1", "processo", "obs5"
-    ]].copy()
+    ]
+    colunas_presentes = [c for c in colunas_desejadas if c in df.columns]
+    df_show = df[colunas_presentes].copy()
 
     df_show["valor_total"] = df_show["valor_total"].apply(fmt_moeda)
 
