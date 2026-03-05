@@ -1,5 +1,5 @@
 """
-database.py - Gerenciamento do banco de dados SQLite
+database.py - Banco de dados SQLite com colunas reais da planilha
 """
 
 import sqlite3
@@ -8,230 +8,217 @@ from pathlib import Path
 
 DB_PATH = "imoveis.db"
 
-COLUNAS_ESPERADAS = [
-    "TOTAL", "N_SUEST", "RIP", "RIP_UTILIZACAO",
-    "VALOR_TERRENO", "VALOR_BENFEITORIA", "VALOR_TOTAL",
-    "ESTADO", "COD_MUNICIPIO", "MUNICIPIO", "ENDERECO",
-    "AREA_TERRENO", "AREA_CONSTRUIDA", "PROPRIEDADE",
-    "OCUPACAO", "OBS1", "PROCESSO", "OBS5"
+# Colunas exatas como aparecem na planilha (para mapeamento)
+MAPA_COLUNAS_EXCEL = {
+    "TOTAL":            "total_seq",
+    "N.º SUEST":        "n_suest",
+    "N° SUEST":         "n_suest",
+    "RIP":              "rip",
+    "RIP UTILIZAÇÃO":   "rip_utilizacao",
+    "valor terreno":    "valor_terreno",
+    "valor benfeitoria":"valor_benfeitoria",
+    "total":            "valor_total",
+    "ESTADO":           "estado",
+    "cod.municipio":    "cod_municipio",
+    "MUNICIPIO":        "municipio",
+    "ENDEREÇO":         "endereco",
+    # coluna com nome longo
+    "Área Terreno                    Se for o caso (Não se aplica a unidade autônoma)": "area_terreno",
+    "Área Construída":  "area_construida",
+    "PROPRIEDADE (Próprio/União/Terceiros)": "propriedade",
+    "ocupação":         "ocupacao",
+    "OBS1":             "obs1",
+    "PROCESSO":         "processo",
+    "OBS5":             "obs5",
+}
+
+# Colunas no banco (ordem fixa)
+COLUNAS_BD = [
+    "total_seq", "n_suest", "rip", "rip_utilizacao",
+    "valor_terreno", "valor_benfeitoria", "valor_total",
+    "estado", "cod_municipio", "municipio", "endereco",
+    "area_terreno", "area_construida",
+    "propriedade", "ocupacao",
+    "obs1", "processo", "obs5",
 ]
 
-MAPA_COLUNAS = {
-    "TOTAL": "TOTAL",
-    "Nº SUEST": "N_SUEST",
-    "N° SUEST": "N_SUEST",
-    "N SUEST": "N_SUEST",
-    "RIP": "RIP",
-    "RIP UTILIZAÇÃO": "RIP_UTILIZACAO",
-    "RIP UTILIZACAO": "RIP_UTILIZACAO",
-    "valor terreno": "VALOR_TERRENO",
-    "VALOR TERRENO": "VALOR_TERRENO",
-    "valor benfeitoria": "VALOR_BENFEITORIA",
-    "VALOR BENFEITORIA": "VALOR_BENFEITORIA",
-    "total": "VALOR_TOTAL",
-    "TOTAL VALOR": "VALOR_TOTAL",
-    "ESTADO": "ESTADO",
-    "cod.municipio": "COD_MUNICIPIO",
-    "COD.MUNICIPIO": "COD_MUNICIPIO",
-    "COD MUNICIPIO": "COD_MUNICIPIO",
-    "MUNICIPIO": "MUNICIPIO",
-    "MUNICÍPIO": "MUNICIPIO",
-    "ENDEREÇO": "ENDERECO",
-    "ENDERECO": "ENDERECO",
-    "Área Terreno": "AREA_TERRENO",
-    "ÁREA TERRENO": "AREA_TERRENO",
-    "AREA TERRENO": "AREA_TERRENO",
-    "Área Construída": "AREA_CONSTRUIDA",
-    "ÁREA CONSTRUÍDA": "AREA_CONSTRUIDA",
-    "AREA CONSTRUIDA": "AREA_CONSTRUIDA",
-    "PROPRIEDADE": "PROPRIEDADE",
-    "ocupação": "OCUPACAO",
-    "OCUPAÇÃO": "OCUPACAO",
-    "OCUPACAO": "OCUPACAO",
-    "OBS1": "OBS1",
-    "PROCESSO": "PROCESSO",
-    "OBS5": "OBS5",
+# Rótulos legíveis para exibição
+LABELS = {
+    "id":               "ID",
+    "total_seq":        "Nº Total",
+    "n_suest":          "Nº SUEST",
+    "rip":              "RIP",
+    "rip_utilizacao":   "RIP Utilização",
+    "valor_terreno":    "Valor Terreno",
+    "valor_benfeitoria":"Valor Benfeitoria",
+    "valor_total":      "Valor Total",
+    "estado":           "Estado",
+    "cod_municipio":    "Cód. Município",
+    "municipio":        "Município",
+    "endereco":         "Endereço",
+    "area_terreno":     "Área Terreno",
+    "area_construida":  "Área Construída",
+    "propriedade":      "Propriedade",
+    "ocupacao":         "Ocupação / Destinação",
+    "obs1":             "OBS1 (Registro/Título)",
+    "processo":         "Processo",
+    "obs5":             "OBS5 (Escrituração)",
+    "data_importacao":  "Data Importação",
 }
+
+# Identifica se o imóvel está cedido
+TERMOS_CESSAO = ["cessão", "cessao", "cedido", "cedida", "cesso de uso", "cessão de uso"]
 
 
 def get_connection():
-    """Retorna conexão com o banco SQLite."""
     return sqlite3.connect(DB_PATH)
 
 
 def criar_tabelas():
-    """Cria as tabelas necessárias no banco de dados."""
     conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
+    c = conn.cursor()
+    c.execute(f"""
         CREATE TABLE IF NOT EXISTS imoveis (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            TOTAL TEXT,
-            N_SUEST TEXT,
-            RIP TEXT,
-            RIP_UTILIZACAO TEXT,
-            VALOR_TERRENO REAL,
-            VALOR_BENFEITORIA REAL,
-            VALOR_TOTAL REAL,
-            ESTADO TEXT,
-            COD_MUNICIPIO TEXT,
-            MUNICIPIO TEXT,
-            ENDERECO TEXT,
-            AREA_TERRENO REAL,
-            AREA_CONSTRUIDA REAL,
-            PROPRIEDADE TEXT,
-            OCUPACAO TEXT,
-            OBS1 TEXT,
-            PROCESSO TEXT,
-            OBS5 TEXT,
-            data_importacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            total_seq        TEXT,
+            n_suest          TEXT,
+            rip              TEXT,
+            rip_utilizacao   TEXT,
+            valor_terreno    REAL,
+            valor_benfeitoria REAL,
+            valor_total      REAL,
+            estado           TEXT,
+            cod_municipio    TEXT,
+            municipio        TEXT,
+            endereco         TEXT,
+            area_terreno     TEXT,
+            area_construida  TEXT,
+            propriedade      TEXT,
+            ocupacao         TEXT,
+            obs1             TEXT,
+            processo         TEXT,
+            obs5             TEXT,
+            data_importacao  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-
-    cursor.execute("""
+    c.execute("""
         CREATE TABLE IF NOT EXISTS importacoes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            arquivo TEXT,
-            data_importacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            total_registros INTEGER,
-            novos_registros INTEGER
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            arquivo          TEXT,
+            data_importacao  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            total_registros  INTEGER,
+            novos_registros  INTEGER
         )
     """)
-
     conn.commit()
     conn.close()
 
 
 def banco_existe():
-    """Verifica se o banco já tem dados."""
     if not Path(DB_PATH).exists():
         return False
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM imoveis")
-    count = cursor.fetchone()[0]
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM imoveis")
+    n = c.fetchone()[0]
     conn.close()
-    return count > 0
+    return n > 0
 
 
 def contar_registros():
-    """Conta total de registros no banco."""
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM imoveis")
-    count = cursor.fetchone()[0]
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM imoveis")
+    n = c.fetchone()[0]
     conn.close()
-    return count
+    return n
 
 
-def buscar_imoveis(filtros=None, busca_global="", limit=100, offset=0):
-    """
-    Busca imóveis com filtros e busca global.
-    Retorna (DataFrame, total_count).
-    """
+def listar_valores_unicos(campo, estado=None):
     conn = get_connection()
+    c = conn.cursor()
+    if estado and estado != "Todos":
+        c.execute(
+            f"SELECT DISTINCT {campo} FROM imoveis WHERE estado=? AND {campo} IS NOT NULL AND TRIM({campo})!='' ORDER BY {campo}",
+            [estado]
+        )
+    else:
+        c.execute(
+            f"SELECT DISTINCT {campo} FROM imoveis WHERE {campo} IS NOT NULL AND TRIM({campo})!='' ORDER BY {campo}"
+        )
+    vals = [r[0] for r in c.fetchall()]
+    conn.close()
+    return vals
 
-    where_clauses = []
+
+def buscar_imoveis(filtros=None, busca_global="", limit=50, offset=0):
+    conn = get_connection()
+    where = []
     params = []
 
     if busca_global and busca_global.strip():
-        termo = f"%{busca_global.strip()}%"
-        campos_busca = [
-            "RIP", "MUNICIPIO", "ESTADO", "ENDERECO",
-            "PROCESSO", "OBS1", "OBS5", "PROPRIEDADE",
-            "OCUPACAO", "N_SUEST", "RIP_UTILIZACAO"
-        ]
-        busca_clause = " OR ".join([f"UPPER({c}) LIKE UPPER(?)" for c in campos_busca])
-        where_clauses.append(f"({busca_clause})")
-        params.extend([termo] * len(campos_busca))
+        t = f"%{busca_global.strip()}%"
+        campos = ["rip", "rip_utilizacao", "municipio", "estado", "endereco",
+                  "ocupacao", "obs1", "obs5", "processo", "n_suest", "propriedade"]
+        where.append("(" + " OR ".join([f"UPPER({c}) LIKE UPPER(?)" for c in campos]) + ")")
+        params.extend([t] * len(campos))
 
     if filtros:
         if filtros.get("estado") and filtros["estado"] != "Todos":
-            where_clauses.append("ESTADO = ?")
-            params.append(filtros["estado"])
-
+            where.append("estado = ?"); params.append(filtros["estado"])
         if filtros.get("municipio") and filtros["municipio"] != "Todos":
-            where_clauses.append("MUNICIPIO = ?")
-            params.append(filtros["municipio"])
-
+            where.append("municipio = ?"); params.append(filtros["municipio"])
         if filtros.get("propriedade") and filtros["propriedade"] != "Todos":
-            where_clauses.append("PROPRIEDADE = ?")
-            params.append(filtros["propriedade"])
+            where.append("propriedade = ?"); params.append(filtros["propriedade"])
+        if filtros.get("so_cessao"):
+            termos = " OR ".join([f"UPPER(ocupacao) LIKE '%{t.upper()}%'" for t in TERMOS_CESSAO])
+            where.append(f"({termos})")
+        if filtros.get("so_rip_util"):
+            where.append("rip_utilizacao IS NOT NULL AND TRIM(rip_utilizacao) != ''")
 
-        if filtros.get("ocupacao") and filtros["ocupacao"] != "Todos":
-            where_clauses.append("OCUPACAO = ?")
-            params.append(filtros["ocupacao"])
+    ws = ("WHERE " + " AND ".join(where)) if where else ""
 
-        if filtros.get("valor_min") is not None:
-            where_clauses.append("VALOR_TOTAL >= ?")
-            params.append(filtros["valor_min"])
+    c = conn.cursor()
+    c.execute(f"SELECT COUNT(*) FROM imoveis {ws}", params)
+    total = c.fetchone()[0]
 
-        if filtros.get("valor_max") is not None:
-            where_clauses.append("VALOR_TOTAL <= ?")
-            params.append(filtros["valor_max"])
-
-        if filtros.get("area_min") is not None:
-            where_clauses.append("AREA_TERRENO >= ?")
-            params.append(filtros["area_min"])
-
-        if filtros.get("area_max") is not None:
-            where_clauses.append("AREA_TERRENO <= ?")
-            params.append(filtros["area_max"])
-
-    where_sql = ""
-    if where_clauses:
-        where_sql = "WHERE " + " AND ".join(where_clauses)
-
-    count_sql = f"SELECT COUNT(*) FROM imoveis {where_sql}"
-    cursor = conn.cursor()
-    cursor.execute(count_sql, params)
-    total = cursor.fetchone()[0]
-
-    data_sql = f"SELECT * FROM imoveis {where_sql} LIMIT ? OFFSET ?"
-    df = pd.read_sql_query(data_sql, conn, params=params + [limit, offset])
-
+    df = pd.read_sql_query(
+        f"SELECT * FROM imoveis {ws} ORDER BY id LIMIT ? OFFSET ?",
+        conn, params=params + [limit, offset]
+    )
     conn.close()
     return df, total
 
 
 def buscar_por_id(imovel_id):
-    """Retorna um imóvel pelo ID."""
     conn = get_connection()
-    df = pd.read_sql_query("SELECT * FROM imoveis WHERE id = ?", conn, params=[imovel_id])
+    df = pd.read_sql_query("SELECT * FROM imoveis WHERE id=?", conn, params=[imovel_id])
     conn.close()
-    if len(df) > 0:
-        return df.iloc[0].to_dict()
-    return None
-
-
-def listar_valores_unicos(campo):
-    """Lista valores únicos de um campo para os filtros."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(f"SELECT DISTINCT {campo} FROM imoveis WHERE {campo} IS NOT NULL AND {campo} != '' ORDER BY {campo}")
-    valores = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    return valores
+    return df.iloc[0].to_dict() if len(df) > 0 else None
 
 
 def buscar_todos_para_dashboard():
-    """Retorna todos os dados para o dashboard."""
     conn = get_connection()
     df = pd.read_sql_query("SELECT * FROM imoveis", conn)
     conn.close()
     return df
 
 
-def buscar_com_filtros_para_relatorio(filtros=None, busca_global=""):
-    """Busca todos os registros filtrados para exportação."""
+def buscar_para_relatorio(filtros=None, busca_global=""):
     df, _ = buscar_imoveis(filtros=filtros, busca_global=busca_global, limit=999999, offset=0)
     return df
 
 
 def historico_importacoes():
-    """Retorna histórico de importações."""
     conn = get_connection()
     df = pd.read_sql_query("SELECT * FROM importacoes ORDER BY data_importacao DESC", conn)
     conn.close()
     return df
+
+
+def eh_cessao(ocupacao_str):
+    """Retorna True se a ocupação indica cessão de uso."""
+    if not ocupacao_str:
+        return False
+    s = str(ocupacao_str).lower()
+    return any(t in s for t in TERMOS_CESSAO)

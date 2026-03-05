@@ -1,207 +1,111 @@
-"""
-relatorios.py - Geração de relatórios em Excel e CSV
-"""
-
+"""relatorios.py"""
 import streamlit as st
 import pandas as pd
 import io
 from datetime import datetime
-from database import buscar_com_filtros_para_relatorio, listar_valores_unicos
-from utils import formatar_moeda
+from database import buscar_para_relatorio, listar_valores_unicos, LABELS
+from utils import fmt_moeda
 
-
-NOMES_COLUNAS = {
-    "id": "ID",
-    "TOTAL": "Total",
-    "N_SUEST": "Nº SUEST",
-    "RIP": "RIP",
-    "RIP_UTILIZACAO": "RIP Utilização",
-    "VALOR_TERRENO": "Valor Terreno (R$)",
-    "VALOR_BENFEITORIA": "Valor Benfeitoria (R$)",
-    "VALOR_TOTAL": "Valor Total (R$)",
-    "ESTADO": "Estado",
-    "COD_MUNICIPIO": "Cód. Município",
-    "MUNICIPIO": "Município",
-    "ENDERECO": "Endereço",
-    "AREA_TERRENO": "Área Terreno (m²)",
-    "AREA_CONSTRUIDA": "Área Construída (m²)",
-    "PROPRIEDADE": "Propriedade",
-    "OCUPACAO": "Ocupação",
-    "OBS1": "OBS1",
-    "PROCESSO": "Processo",
-    "OBS5": "OBS5",
-    "data_importacao": "Data Importação"
+RENAME = {
+    "id": "ID", "total_seq": "Nº Total", "n_suest": "Nº SUEST",
+    "rip": "RIP", "rip_utilizacao": "RIP Utilização",
+    "valor_terreno": "Valor Terreno (R$)", "valor_benfeitoria": "Valor Benfeitoria (R$)",
+    "valor_total": "Valor Total (R$)", "estado": "Estado",
+    "cod_municipio": "Cód. Município", "municipio": "Município",
+    "endereco": "Endereço", "area_terreno": "Área Terreno",
+    "area_construida": "Área Construída", "propriedade": "Propriedade",
+    "ocupacao": "Ocupação / Destinação", "obs1": "OBS1 (Registro/Título)",
+    "processo": "Processo", "obs5": "OBS5 (Escrituração)",
+    "data_importacao": "Data Importação",
 }
 
 
 def exportar_excel(df):
-    """Exporta DataFrame para bytes de Excel."""
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # Renomeia colunas
-        df_export = df.rename(columns=NOMES_COLUNAS)
-
-        df_export.to_excel(writer, index=False, sheet_name="Imóveis")
-
-        # Formata a planilha
+    buf = io.BytesIO()
+    df_e = df.rename(columns=RENAME)
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df_e.to_excel(writer, index=False, sheet_name="Imóveis")
         ws = writer.sheets["Imóveis"]
+        for i, col in enumerate(df_e.columns, 1):
+            w = max(len(str(col)), df_e[col].astype(str).str.len().max() if len(df_e) > 0 else 10)
+            ws.column_dimensions[ws.cell(1, i).column_letter].width = min(w + 2, 60)
 
-        # Ajusta largura das colunas
-        for col_idx, col in enumerate(df_export.columns, 1):
-            max_len = max(
-                len(str(col)),
-                df_export[col].astype(str).str.len().max() if len(df_export) > 0 else 0
-            )
-            ws.column_dimensions[ws.cell(1, col_idx).column_letter].width = min(max_len + 2, 50)
-
-        # Aba de resumo
-        if len(df) > 0:
-            resumo_data = {
-                "Métrica": [
-                    "Total de Imóveis",
-                    "Valor Total (R$)",
-                    "Área Total Terreno (m²)",
-                    "Área Total Construída (m²)",
-                    "Estados",
-                    "Municípios",
-                    "Data do Relatório"
-                ],
-                "Valor": [
-                    len(df),
-                    f"R$ {df['VALOR_TOTAL'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if "VALOR_TOTAL" in df.columns else "N/A",
-                    f"{df['AREA_TERRENO'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if "AREA_TERRENO" in df.columns else "N/A",
-                    f"{df['AREA_CONSTRUIDA'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if "AREA_CONSTRUIDA" in df.columns else "N/A",
-                    df["ESTADO"].nunique() if "ESTADO" in df.columns else "N/A",
-                    df["MUNICIPIO"].nunique() if "MUNICIPIO" in df.columns else "N/A",
-                    datetime.now().strftime("%d/%m/%Y %H:%M")
-                ]
-            }
-            df_resumo = pd.DataFrame(resumo_data)
-            df_resumo.to_excel(writer, index=False, sheet_name="Resumo")
-
-    return output.getvalue()
+        # aba resumo
+        vt = pd.to_numeric(df["valor_total"], errors="coerce").sum()
+        resumo = pd.DataFrame({
+            "Métrica": ["Total de Imóveis", "Valor Total (R$)", "Estados", "Municípios", "Data"],
+            "Valor": [len(df), fmt_moeda(vt),
+                      df["estado"].nunique(), df["municipio"].nunique(),
+                      datetime.now().strftime("%d/%m/%Y %H:%M")]
+        })
+        resumo.to_excel(writer, index=False, sheet_name="Resumo")
+    return buf.getvalue()
 
 
 def exportar_csv(df):
-    """Exporta DataFrame para bytes de CSV."""
-    df_export = df.rename(columns=NOMES_COLUNAS)
-    return df_export.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+    return df.rename(columns=RENAME).to_csv(index=False, sep=";", encoding="utf-8-sig").encode("utf-8-sig")
 
 
 def render_pagina_relatorios():
-    """Renderiza a página de geração de relatórios."""
     st.title("📄 Geração de Relatórios")
-    st.markdown("Configure os filtros abaixo e exporte os dados filtrados.")
-
+    st.markdown("Configure os filtros e exporte os dados.")
     st.markdown("---")
 
-    # ── Filtros do Relatório ────────────────────────────────────────────────
-    st.markdown("### 🔍 Filtros do Relatório")
-
-    col1, col2 = st.columns(2)
+    st.markdown("### 🔍 Filtros")
+    c1, c2 = st.columns(2)
     filtros = {}
 
-    with col1:
-        try:
-            estados = ["Todos"] + listar_valores_unicos("ESTADO")
-        except Exception:
-            estados = ["Todos"]
-        filtros["estado"] = st.selectbox("🗺️ Estado", estados, key="rel_estado")
+    with c1:
+        filtros["estado"]    = st.selectbox("Estado",    ["Todos"] + listar_valores_unicos("estado"),    key="r_est")
+        filtros["propriedade"] = st.selectbox("Propriedade", ["Todos"] + listar_valores_unicos("propriedade"), key="r_prop")
+        filtros["so_cessao"] = st.checkbox("🔄 Somente Cessão de Uso", key="r_cess")
 
-        try:
-            propriedades = ["Todos"] + listar_valores_unicos("PROPRIEDADE")
-        except Exception:
-            propriedades = ["Todos"]
-        filtros["propriedade"] = st.selectbox("🏢 Tipo de Propriedade", propriedades, key="rel_prop")
+    with c2:
+        filtros["municipio"] = st.selectbox("Município",  ["Todos"] + listar_valores_unicos("municipio"), key="r_mun")
+        busca = st.text_input("Busca por texto", key="r_busca")
+        filtros["so_rip_util"] = st.checkbox("📋 Somente com RIP Utilização", key="r_riputil")
 
-    with col2:
-        try:
-            municipios = ["Todos"] + listar_valores_unicos("MUNICIPIO")
-        except Exception:
-            municipios = ["Todos"]
-        filtros["municipio"] = st.selectbox("🏙️ Município", municipios, key="rel_mun")
-
-        try:
-            ocupacoes = ["Todos"] + listar_valores_unicos("OCUPACAO")
-        except Exception:
-            ocupacoes = ["Todos"]
-        filtros["ocupacao"] = st.selectbox("🔑 Situação de Ocupação", ocupacoes, key="rel_ocup")
-
-    col3, col4 = st.columns(2)
-    with col3:
-        usar_valor = st.checkbox("Filtrar por valor", key="rel_usar_valor")
-        if usar_valor:
-            filtros["valor_min"] = st.number_input("Valor mínimo (R$)", min_value=0.0, value=0.0, step=1000.0, key="rel_vmin")
-            filtros["valor_max"] = st.number_input("Valor máximo (R$)", min_value=0.0, value=10000000.0, step=1000.0, key="rel_vmax")
-    with col4:
-        busca_texto = st.text_input("🔎 Busca por texto", placeholder="RIP, endereço, processo...", key="rel_busca")
-
-    # Normaliza filtros
-    for key in ["estado", "municipio", "propriedade", "ocupacao"]:
-        if filtros.get(key) == "Todos":
-            filtros[key] = None
-    if not usar_valor:
-        filtros["valor_min"] = None
-        filtros["valor_max"] = None
+    for k in ["estado", "municipio", "propriedade"]:
+        if filtros.get(k) == "Todos":
+            filtros[k] = None
 
     st.markdown("---")
 
-    # ── Preview e Exportação ───────────────────────────────────────────────
-    if st.button("🔍 Aplicar Filtros e Pré-visualizar", type="primary", use_container_width=True):
-        with st.spinner("Buscando dados..."):
-            df = buscar_com_filtros_para_relatorio(filtros=filtros, busca_global=busca_texto)
-            st.session_state.df_relatorio = df
+    if st.button("🔍 Aplicar e Visualizar", type="primary", use_container_width=True):
+        with st.spinner("Buscando..."):
+            df = buscar_para_relatorio(filtros=filtros, busca_global=busca)
+            st.session_state.df_rel = df
 
-    if "df_relatorio" in st.session_state and st.session_state.df_relatorio is not None:
-        df = st.session_state.df_relatorio
+    if "df_rel" in st.session_state:
+        df = st.session_state.df_rel
+        st.markdown(f"### {len(df):,} registros encontrados".replace(",","."))
 
-        st.markdown(f"### 📊 Resultado: **{len(df):,}** registros encontrados")
-
-        # Métricas resumo
         if len(df) > 0:
-            col_m1, col_m2, col_m3 = st.columns(3)
-            if "VALOR_TOTAL" in df.columns:
-                col_m1.metric("💰 Valor Total", formatar_moeda(df["VALOR_TOTAL"].sum()))
-            if "AREA_TERRENO" in df.columns:
-                col_m2.metric("📐 Área Terreno", f"{df['AREA_TERRENO'].sum():,.0f} m²".replace(",", "."))
-            if "ESTADO" in df.columns:
-                col_m3.metric("🗺️ Estados", str(df["ESTADO"].nunique()))
+            c1, c2, c3 = st.columns(3)
+            vt = pd.to_numeric(df["valor_total"], errors="coerce").sum()
+            c1.metric("Valor Total", fmt_moeda(vt))
+            c2.metric("Estados",    str(df["estado"].nunique()))
+            c3.metric("Municípios", str(df["municipio"].nunique()))
 
-            # Preview da tabela (100 primeiros)
-            st.markdown("#### Preview (primeiros 100 registros)")
-            colunas_preview = ["RIP", "MUNICIPIO", "ESTADO", "ENDERECO",
-                               "PROPRIEDADE", "OCUPACAO", "VALOR_TOTAL", "AREA_TERRENO"]
-            colunas_validas = [c for c in colunas_preview if c in df.columns]
-            st.dataframe(df[colunas_validas].head(100), use_container_width=True, hide_index=True)
+            st.dataframe(
+                df[["rip","rip_utilizacao","municipio","estado","endereco",
+                    "propriedade","ocupacao","valor_total","area_terreno",
+                    "obs1","processo","obs5"]].head(100),
+                use_container_width=True, hide_index=True
+            )
 
-            # Botões de exportação
             st.markdown("---")
             st.markdown("### 💾 Exportar")
-
-            nome_base = f"imoveis_publicos_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-            col_exp1, col_exp2 = st.columns(2)
-
-            with col_exp1:
-                with st.spinner("Preparando Excel..."):
-                    excel_bytes = exportar_excel(df)
-                st.download_button(
-                    label="📥 Baixar Excel (.xlsx)",
-                    data=excel_bytes,
-                    file_name=f"{nome_base}.xlsx",
+            nome = f"imoveis_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            ca, cb = st.columns(2)
+            with ca:
+                st.download_button("📥 Excel (.xlsx)", exportar_excel(df),
+                    file_name=f"{nome}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                    type="primary"
-                )
-
-            with col_exp2:
-                csv_bytes = exportar_csv(df)
-                st.download_button(
-                    label="📥 Baixar CSV (.csv)",
-                    data=csv_bytes,
-                    file_name=f"{nome_base}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
+                    use_container_width=True, type="primary")
+            with cb:
+                st.download_button("📥 CSV (.csv)", exportar_csv(df),
+                    file_name=f"{nome}.csv", mime="text/csv",
+                    use_container_width=True)
         else:
-            st.info("Nenhum registro encontrado com os filtros aplicados.")
+            st.info("Nenhum registro encontrado.")

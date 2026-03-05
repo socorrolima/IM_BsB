@@ -1,282 +1,151 @@
-"""
-dashboard.py - Dashboard com gráficos automáticos
-"""
-
+"""dashboard.py"""
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-from database import buscar_todos_para_dashboard, contar_registros
-from utils import formatar_moeda, formatar_numero
+from database import buscar_todos_para_dashboard, contar_registros, eh_cessao
+from utils import fmt_moeda, fmt_numero
 
 
 def render_dashboard():
-    """Renderiza o dashboard com gráficos automáticos."""
     st.title("📊 Dashboard — Imóveis Públicos")
 
-    total = contar_registros()
-    if total == 0:
-        st.warning("⚠️ Nenhum dado disponível. Importe uma planilha primeiro.")
-        return
+    if contar_registros() == 0:
+        st.warning("⚠️ Importe uma planilha primeiro."); return
 
     df = buscar_todos_para_dashboard()
-
     if df.empty:
-        st.warning("Nenhum dado disponível.")
-        return
+        st.warning("Sem dados."); return
 
-    # ── KPIs no topo ─────────────────────────────────────────────────────────
-    col1, col2, col3, col4 = st.columns(4)
+    # ── KPIs ──────────────────────────────────────────────────────────────────
+    total = len(df)
+    valor_total = pd.to_numeric(df["valor_total"], errors="coerce").sum()
+    cessoes = df["ocupacao"].apply(eh_cessao).sum()
+    estados_n = df["estado"].nunique()
 
-    total_imoveis = len(df)
-    valor_total = df["VALOR_TOTAL"].sum() if "VALOR_TOTAL" in df.columns else 0
-    area_total = df["AREA_TERRENO"].sum() if "AREA_TERRENO" in df.columns else 0
-    estados_count = df["ESTADO"].nunique() if "ESTADO" in df.columns else 0
-
-    col1.metric("🏛️ Total de Imóveis", formatar_numero(total_imoveis))
-    col2.metric("💰 Valor Total", formatar_moeda(valor_total))
-    col3.metric("📐 Área Total (m²)", f"{area_total:,.0f}".replace(",", "."))
-    col4.metric("🗺️ Estados", str(estados_count))
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("🏛️ Total de Imóveis",   fmt_numero(total))
+    c2.metric("💰 Valor Total",         fmt_moeda(valor_total))
+    c3.metric("🔄 Em Cessão de Uso",    fmt_numero(int(cessoes)))
+    c4.metric("🗺️ Estados",            str(estados_n))
 
     st.markdown("---")
 
-    # ── Linha 1: Estados e Municípios ────────────────────────────────────────
+    # ── Linha 1: Estado | Município ───────────────────────────────────────────
     col_a, col_b = st.columns(2)
 
     with col_a:
         st.markdown("### 🗺️ Imóveis por Estado")
-        if "ESTADO" in df.columns:
-            df_estado = (
-                df["ESTADO"]
-                .dropna()
-                .value_counts()
-                .reset_index()
-            )
-            df_estado.columns = ["Estado", "Quantidade"]
-            df_estado = df_estado.sort_values("Quantidade", ascending=True).tail(20)
-
-            fig_estado = px.bar(
-                df_estado,
-                x="Quantidade",
-                y="Estado",
-                orientation='h',
-                color="Quantidade",
-                color_continuous_scale="Blues",
-                template="plotly_white"
-            )
-            fig_estado.update_layout(
-                height=400,
-                showlegend=False,
-                coloraxis_showscale=False,
-                margin=dict(l=10, r=10, t=10, b=10)
-            )
-            fig_estado.update_traces(texttemplate='%{x}', textposition='outside')
-            st.plotly_chart(fig_estado, use_container_width=True)
-        else:
-            st.info("Campo ESTADO não disponível.")
+        d = df["estado"].dropna().value_counts().reset_index()
+        d.columns = ["Estado", "Qtd"]
+        d = d.sort_values("Qtd", ascending=True)
+        fig = px.bar(d, x="Qtd", y="Estado", orientation="h",
+                     color="Qtd", color_continuous_scale="Blues",
+                     template="plotly_white")
+        fig.update_layout(height=420, showlegend=False, coloraxis_showscale=False,
+                          margin=dict(l=5,r=5,t=5,b=5))
+        fig.update_traces(texttemplate="%{x}", textposition="outside")
+        st.plotly_chart(fig, use_container_width=True)
 
     with col_b:
         st.markdown("### 🏙️ Top 15 Municípios")
-        if "MUNICIPIO" in df.columns:
-            df_mun = (
-                df["MUNICIPIO"]
-                .dropna()
-                .value_counts()
-                .head(15)
-                .reset_index()
-            )
-            df_mun.columns = ["Município", "Quantidade"]
-            df_mun = df_mun.sort_values("Quantidade", ascending=True)
-
-            fig_mun = px.bar(
-                df_mun,
-                x="Quantidade",
-                y="Município",
-                orientation='h',
-                color="Quantidade",
-                color_continuous_scale="Greens",
-                template="plotly_white"
-            )
-            fig_mun.update_layout(
-                height=400,
-                showlegend=False,
-                coloraxis_showscale=False,
-                margin=dict(l=10, r=10, t=10, b=10)
-            )
-            st.plotly_chart(fig_mun, use_container_width=True)
-        else:
-            st.info("Campo MUNICIPIO não disponível.")
+        d = df["municipio"].dropna().value_counts().head(15).reset_index()
+        d.columns = ["Município", "Qtd"]
+        d = d.sort_values("Qtd", ascending=True)
+        fig = px.bar(d, x="Qtd", y="Município", orientation="h",
+                     color="Qtd", color_continuous_scale="Greens",
+                     template="plotly_white")
+        fig.update_layout(height=420, showlegend=False, coloraxis_showscale=False,
+                          margin=dict(l=5,r=5,t=5,b=5))
+        st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
 
-    # ── Linha 2: Propriedade e Ocupação ──────────────────────────────────────
+    # ── Linha 2: Ocupação (top categorias) | Cessão vs Não-cessão ────────────
     col_c, col_d = st.columns(2)
 
     with col_c:
-        st.markdown("### 🏢 Tipo de Propriedade")
-        if "PROPRIEDADE" in df.columns:
-            df_prop = (
-                df["PROPRIEDADE"]
-                .dropna()
-                .replace('', pd.NA)
-                .dropna()
-                .value_counts()
-                .reset_index()
-            )
-            df_prop.columns = ["Propriedade", "Quantidade"]
-
-            if not df_prop.empty:
-                fig_prop = px.pie(
-                    df_prop,
-                    names="Propriedade",
-                    values="Quantidade",
-                    hole=0.4,
-                    color_discrete_sequence=px.colors.qualitative.Set3
-                )
-                fig_prop.update_layout(
-                    height=350,
-                    margin=dict(l=10, r=10, t=30, b=10),
-                    legend=dict(orientation="v", x=1.01)
-                )
-                fig_prop.update_traces(textposition='inside', textinfo='percent+label')
-                st.plotly_chart(fig_prop, use_container_width=True)
-            else:
-                st.info("Sem dados de propriedade.")
-        else:
-            st.info("Campo PROPRIEDADE não disponível.")
+        st.markdown("### 🔑 Top 15 Tipos de Ocupação / Destinação")
+        d = df["ocupacao"].dropna().replace("", pd.NA).dropna()
+        # normaliza um pouco
+        d = d.str.strip().value_counts().head(15).reset_index()
+        d.columns = ["Ocupação", "Qtd"]
+        d = d.sort_values("Qtd", ascending=True)
+        fig = px.bar(d, x="Qtd", y="Ocupação", orientation="h",
+                     color="Qtd", color_continuous_scale="Oranges",
+                     template="plotly_white")
+        fig.update_layout(height=420, showlegend=False, coloraxis_showscale=False,
+                          margin=dict(l=5,r=5,t=5,b=5))
+        st.plotly_chart(fig, use_container_width=True)
 
     with col_d:
-        st.markdown("### 🔑 Situação de Ocupação")
-        if "OCUPACAO" in df.columns:
-            df_ocup = (
-                df["OCUPACAO"]
-                .dropna()
-                .replace('', pd.NA)
-                .dropna()
-                .value_counts()
-                .reset_index()
+        st.markdown("### 🔄 Situação de Uso")
+        cessao_s = df["ocupacao"].apply(
+            lambda x: "Cessão de Uso" if eh_cessao(x) else (
+                "Sem informação" if (not x or str(x).strip() in ("","nan","None"))
+                else "Em uso / Outro"
             )
-            df_ocup.columns = ["Ocupação", "Quantidade"]
-
-            if not df_ocup.empty:
-                cores = {
-                    "OCUPADO": "#e74c3c",
-                    "DESOCUPADO": "#2ecc71",
-                    "CEDIDO": "#3498db",
-                    "IRREGULAR": "#e67e22",
-                }
-                fig_ocup = px.bar(
-                    df_ocup,
-                    x="Ocupação",
-                    y="Quantidade",
-                    color="Ocupação",
-                    color_discrete_map=cores,
-                    template="plotly_white"
-                )
-                fig_ocup.update_layout(
-                    height=350,
-                    showlegend=False,
-                    margin=dict(l=10, r=10, t=10, b=60)
-                )
-                fig_ocup.update_traces(texttemplate='%{y}', textposition='outside')
-                st.plotly_chart(fig_ocup, use_container_width=True)
-            else:
-                st.info("Sem dados de ocupação.")
-        else:
-            st.info("Campo OCUPACAO não disponível.")
+        )
+        d = cessao_s.value_counts().reset_index()
+        d.columns = ["Situação", "Qtd"]
+        cores = {
+            "Cessão de Uso":   "#3498db",
+            "Em uso / Outro":  "#27ae60",
+            "Sem informação":  "#bdc3c7",
+        }
+        fig = px.pie(d, names="Situação", values="Qtd", hole=0.4,
+                     color="Situação", color_discrete_map=cores)
+        fig.update_layout(height=420, margin=dict(l=5,r=5,t=30,b=5))
+        fig.update_traces(textposition="inside", textinfo="percent+label")
+        st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
 
-    # ── Linha 3: Valor por Estado e Distribuição de Áreas ───────────────────
+    # ── Linha 3: Valor por estado | Propriedade ───────────────────────────────
     col_e, col_f = st.columns(2)
 
     with col_e:
         st.markdown("### 💰 Valor Total por Estado")
-        if "ESTADO" in df.columns and "VALOR_TOTAL" in df.columns:
-            df_val_estado = (
-                df.groupby("ESTADO")["VALOR_TOTAL"]
-                .sum()
-                .reset_index()
-                .sort_values("VALOR_TOTAL", ascending=False)
-                .head(15)
-            )
-            df_val_estado.columns = ["Estado", "Valor Total"]
-
-            fig_val = px.bar(
-                df_val_estado,
-                x="Estado",
-                y="Valor Total",
-                color="Valor Total",
-                color_continuous_scale="Oranges",
-                template="plotly_white"
-            )
-            fig_val.update_layout(
-                height=350,
-                showlegend=False,
-                coloraxis_showscale=False,
-                margin=dict(l=10, r=10, t=10, b=10),
-                yaxis_tickformat=","
-            )
-            st.plotly_chart(fig_val, use_container_width=True)
-        else:
-            st.info("Dados de valor por estado não disponíveis.")
+        df["_vt"] = pd.to_numeric(df["valor_total"], errors="coerce")
+        d = df.groupby("estado")["_vt"].sum().reset_index().sort_values("_vt", ascending=False).head(15)
+        d.columns = ["Estado", "Valor"]
+        fig = px.bar(d, x="Estado", y="Valor", color="Valor",
+                     color_continuous_scale="Reds", template="plotly_white")
+        fig.update_layout(height=350, showlegend=False, coloraxis_showscale=False,
+                          margin=dict(l=5,r=5,t=5,b=5))
+        st.plotly_chart(fig, use_container_width=True)
 
     with col_f:
-        st.markdown("### 📐 Distribuição de Área do Terreno")
-        if "AREA_TERRENO" in df.columns:
-            df_area = df["AREA_TERRENO"].dropna()
-            df_area = df_area[df_area > 0]
-
-            if len(df_area) > 0:
-                # Remove outliers extremos para melhor visualização
-                q99 = df_area.quantile(0.99)
-                df_area_plot = df_area[df_area <= q99]
-
-                fig_hist = px.histogram(
-                    df_area_plot,
-                    x=df_area_plot,
-                    nbins=30,
-                    color_discrete_sequence=["#8e44ad"],
-                    template="plotly_white"
-                )
-                fig_hist.update_layout(
-                    height=350,
-                    xaxis_title="Área (m²)",
-                    yaxis_title="Quantidade",
-                    showlegend=False,
-                    margin=dict(l=10, r=10, t=10, b=10)
-                )
-                st.plotly_chart(fig_hist, use_container_width=True)
-            else:
-                st.info("Sem dados de área disponíveis.")
-        else:
-            st.info("Campo AREA_TERRENO não disponível.")
+        st.markdown("### 🏢 Tipo de Propriedade")
+        # Normaliza variações (Próprio / PRÓPRIO → Próprio)
+        prop_norm = df["propriedade"].dropna().replace("", pd.NA).dropna()
+        prop_norm = prop_norm.str.strip()
+        # Agrupa variações óbvias
+        prop_norm = prop_norm.replace({
+            "PRÓPRIO": "Próprio", "Próprio": "Próprio",
+            "REGULAR": "Regular",
+            "IRREGULAR": "Irregular",
+            "UNIÃO": "União",
+        })
+        d = prop_norm.value_counts().head(10).reset_index()
+        d.columns = ["Propriedade", "Qtd"]
+        fig = px.pie(d, names="Propriedade", values="Qtd", hole=0.4,
+                     color_discrete_sequence=px.colors.qualitative.Set3)
+        fig.update_layout(height=350, margin=dict(l=5,r=5,t=30,b=5))
+        fig.update_traces(textposition="inside", textinfo="percent+label")
+        st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
 
-    # ── Tabela resumo por estado ─────────────────────────────────────────────
+    # ── Tabela resumo por estado ──────────────────────────────────────────────
     st.markdown("### 📋 Resumo por Estado")
-    if "ESTADO" in df.columns:
-        agg_dict = {"id": "count"}
-        if "VALOR_TOTAL" in df.columns:
-            agg_dict["VALOR_TOTAL"] = "sum"
-        if "AREA_TERRENO" in df.columns:
-            agg_dict["AREA_TERRENO"] = "sum"
-        if "AREA_CONSTRUIDA" in df.columns:
-            agg_dict["AREA_CONSTRUIDA"] = "sum"
-
-        df_resumo = df.groupby("ESTADO").agg(agg_dict).reset_index()
-        df_resumo.columns = (
-            ["Estado", "Qtd. Imóveis"] +
-            (["Valor Total"] if "VALOR_TOTAL" in agg_dict else []) +
-            (["Área Terreno (m²)"] if "AREA_TERRENO" in agg_dict else []) +
-            (["Área Construída (m²)"] if "AREA_CONSTRUIDA" in agg_dict else [])
-        )
-        df_resumo = df_resumo.sort_values("Qtd. Imóveis", ascending=False)
-
-        if "Valor Total" in df_resumo.columns:
-            df_resumo["Valor Total"] = df_resumo["Valor Total"].apply(
-                lambda x: formatar_moeda(x) if pd.notna(x) else "—"
-            )
-
-        st.dataframe(df_resumo, use_container_width=True, hide_index=True)
+    df["_vt"] = pd.to_numeric(df["valor_total"], errors="coerce")
+    df["_cessao"] = df["ocupacao"].apply(eh_cessao)
+    resumo = df.groupby("estado").agg(
+        Imóveis=("id", "count"),
+        Cessões=("_cessao", "sum"),
+        Valor_Total=("_vt", "sum")
+    ).reset_index().sort_values("Imóveis", ascending=False)
+    resumo["Valor_Total"] = resumo["Valor_Total"].apply(fmt_moeda)
+    resumo["Cessões"] = resumo["Cessões"].astype(int)
+    resumo.columns = ["Estado", "Qtd. Imóveis", "Em Cessão", "Valor Total"]
+    st.dataframe(resumo, use_container_width=True, hide_index=True)

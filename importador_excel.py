@@ -1,197 +1,137 @@
 """
-importador_excel.py - Importação e processamento de planilhas Excel
+importador_excel.py - Importa a planilha real para o SQLite
 """
 
 import pandas as pd
-import sqlite3
 import numpy as np
-from database import (
-    get_connection, criar_tabelas, MAPA_COLUNAS,
-    COLUNAS_ESPERADAS
-)
+import sqlite3
+import re
+from database import get_connection, criar_tabelas, MAPA_COLUNAS_EXCEL, COLUNAS_BD
 
 
-def normalizar_nome_coluna(nome):
-    """Normaliza o nome de uma coluna para mapeamento."""
-    if pd.isna(nome):
-        return ""
-    return str(nome).strip()
+def _limpar_area(valor):
+    """Converte área em texto variado para string padronizada."""
+    if pd.isna(valor):
+        return None
+    s = str(valor).strip()
+    if not s or s.lower() in ("nan", "none", "-", "n/a"):
+        return None
+    return s
 
 
-def mapear_colunas(df):
-    """
-    Mapeia as colunas do Excel para os nomes padronizados do banco.
-    Retorna o DataFrame com colunas renomeadas.
-    """
-    mapa_aplicar = {}
-    colunas_originais = df.columns.tolist()
+def _limpar_numero(valor):
+    """Converte texto com vírgula/ponto para float."""
+    if pd.isna(valor):
+        return None
+    s = str(valor).strip().replace(" ", "")
+    if not s or s.lower() in ("nan", "none", "-", "n/a", "0.0"):
+        return None
+    # remove R$, m², letras
+    s = re.sub(r'[^\d.,]', '', s)
+    # trata separador brasileiro
+    if ',' in s and '.' in s:
+        s = s.replace('.', '').replace(',', '.')
+    elif ',' in s:
+        s = s.replace(',', '.')
+    try:
+        return float(s)
+    except Exception:
+        return None
 
-    for col_original in colunas_originais:
-        col_norm = normalizar_nome_coluna(col_original)
-        # Tentativa direta
-        if col_norm in MAPA_COLUNAS:
-            mapa_aplicar[col_original] = MAPA_COLUNAS[col_norm]
+
+def _limpar_texto(valor):
+    if pd.isna(valor):
+        return None
+    s = str(valor).strip()
+    if s.lower() in ("nan", "none", ""):
+        return None
+    return s
+
+
+def mapear_df(df):
+    """Renomeia colunas do Excel para colunas do banco."""
+    # Mapeamento case-insensitive + strip
+    rename = {}
+    for col in df.columns:
+        col_strip = str(col).strip()
+        # direto
+        if col_strip in MAPA_COLUNAS_EXCEL:
+            rename[col] = MAPA_COLUNAS_EXCEL[col_strip]
             continue
-        # Tentativa case-insensitive
-        for chave, valor in MAPA_COLUNAS.items():
-            if col_norm.upper() == chave.upper():
-                mapa_aplicar[col_original] = valor
+        # case-insensitive
+        for k, v in MAPA_COLUNAS_EXCEL.items():
+            if col_strip.upper() == k.upper():
+                rename[col] = v
                 break
-
-    df_renomeado = df.rename(columns=mapa_aplicar)
-
-    # Adiciona colunas faltantes como vazias
-    for col in COLUNAS_ESPERADAS:
-        if col not in df_renomeado.columns:
-            df_renomeado[col] = None
-
-    # Mantém apenas colunas esperadas
-    colunas_existentes = [c for c in COLUNAS_ESPERADAS if c in df_renomeado.columns]
-    df_final = df_renomeado[colunas_existentes].copy()
-
-    # Garante todas as colunas esperadas
-    for col in COLUNAS_ESPERADAS:
-        if col not in df_final.columns:
-            df_final[col] = None
-
-    return df_final[COLUNAS_ESPERADAS]
+    return df.rename(columns=rename)
 
 
-def limpar_dados(df):
-    """
-    Limpa e normaliza os dados do DataFrame.
-    """
-    # Remove linhas completamente vazias
-    df = df.dropna(how='all')
-
-    # Normaliza colunas de texto
-    colunas_texto = [
-        "TOTAL", "N_SUEST", "RIP", "RIP_UTILIZACAO",
-        "ESTADO", "COD_MUNICIPIO", "MUNICIPIO", "ENDERECO",
-        "PROPRIEDADE", "OCUPACAO", "OBS1", "PROCESSO", "OBS5"
-    ]
-    for col in colunas_texto:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.strip()
-            df[col] = df[col].replace(['nan', 'None', 'NaN', 'N/A', '-', ''], None)
-
-    # Normaliza colunas numéricas
-    colunas_numericas = [
-        "VALOR_TERRENO", "VALOR_BENFEITORIA", "VALOR_TOTAL",
-        "AREA_TERRENO", "AREA_CONSTRUIDA"
-    ]
-    for col in colunas_numericas:
-        if col in df.columns:
-            df[col] = pd.to_numeric(
-                df[col].astype(str)
-                .str.replace(',', '.', regex=False)
-                .str.replace(r'[^\d.]', '', regex=True),
-                errors='coerce'
-            )
-            df[col] = df[col].replace([np.inf, -np.inf], None)
-
-    # Remove linhas sem RIP (campo chave)
-    if 'RIP' in df.columns:
-        df = df[df['RIP'].notna() & (df['RIP'] != '')]
-
-    return df.reset_index(drop=True)
-
-
-def importar_excel(arquivo_bytes, nome_arquivo, modo='atualizar'):
-    """
-    Importa uma planilha Excel para o banco SQLite.
-
-    Parâmetros:
-        arquivo_bytes: bytes do arquivo Excel
-        nome_arquivo: nome do arquivo
-        modo: 'atualizar' (evita duplicatas por RIP) ou 'substituir' (limpa tudo)
-
-    Retorna:
-        dict com resultado da importação
-    """
+def importar_excel(arquivo_bytes, nome_arquivo, modo="atualizar"):
     resultado = {
-        "sucesso": False,
-        "mensagem": "",
-        "total_lidos": 0,
-        "novos_registros": 0,
-        "atualizados": 0,
-        "ignorados": 0,
-        "erros": []
+        "sucesso": False, "mensagem": "",
+        "total_lidos": 0, "novos_registros": 0,
+        "atualizados": 0, "ignorados": 0, "erros": []
     }
 
     try:
-        # Lê o Excel
-        try:
-            df = pd.read_excel(arquivo_bytes, engine='openpyxl')
-        except Exception as e:
-            # Tenta ler ignorando linhas de cabeçalho extras
-            try:
-                df = pd.read_excel(arquivo_bytes, engine='openpyxl', header=1)
-            except Exception:
-                resultado["mensagem"] = f"Erro ao ler arquivo Excel: {str(e)}"
-                return resultado
-
+        df = pd.read_excel(arquivo_bytes, engine="openpyxl", dtype=str)
         resultado["total_lidos"] = len(df)
 
         if len(df) == 0:
             resultado["mensagem"] = "Planilha vazia!"
             return resultado
 
-        # Mapeia e limpa colunas
-        df = mapear_colunas(df)
-        df = limpar_dados(df)
+        # Mapeia colunas
+        df = mapear_df(df)
 
-        if len(df) == 0:
-            resultado["mensagem"] = "Nenhum registro válido encontrado após limpeza."
-            return resultado
+        # Garante todas as colunas do banco
+        for col in COLUNAS_BD:
+            if col not in df.columns:
+                df[col] = None
 
-        # Inicializa banco
+        df = df[COLUNAS_BD].copy()
+
+        # Remove linhas totalmente vazias
+        df = df.dropna(how="all").reset_index(drop=True)
+
         criar_tabelas()
         conn = get_connection()
         cursor = conn.cursor()
 
-        if modo == 'substituir':
+        if modo == "substituir":
             cursor.execute("DELETE FROM imoveis")
             conn.commit()
 
-        novos = 0
-        atualizados = 0
-        ignorados = 0
+        # RIPs existentes
+        cursor.execute("SELECT rip FROM imoveis WHERE rip IS NOT NULL")
+        rips_existentes = set(r[0] for r in cursor.fetchall())
 
-        # RIPs já existentes no banco
-        cursor.execute("SELECT RIP FROM imoveis WHERE RIP IS NOT NULL")
-        rips_existentes = set(row[0] for row in cursor.fetchall())
+        novos = atualizados = ignorados = 0
 
         for _, row in df.iterrows():
-            rip = row.get('RIP')
-
             try:
-                valores = {col: row.get(col) for col in COLUNAS_ESPERADAS}
+                vals = {}
+                for col in COLUNAS_BD:
+                    v = row.get(col)
+                    if col in ("valor_terreno", "valor_benfeitoria", "valor_total"):
+                        vals[col] = _limpar_numero(v)
+                    elif col in ("area_terreno", "area_construida"):
+                        vals[col] = _limpar_area(v)
+                    else:
+                        vals[col] = _limpar_texto(v)
 
-                # Converte NaN para None
-                for k, v in valores.items():
-                    if isinstance(v, float) and np.isnan(v):
-                        valores[k] = None
+                rip = vals.get("rip")
 
-                if modo == 'atualizar' and rip and rip in rips_existentes:
-                    # Atualiza registro existente
-                    set_clause = ", ".join([f"{col} = ?" for col in COLUNAS_ESPERADAS if col != 'RIP'])
-                    vals = [valores[col] for col in COLUNAS_ESPERADAS if col != 'RIP']
-                    vals.append(rip)
-                    cursor.execute(
-                        f"UPDATE imoveis SET {set_clause} WHERE RIP = ?",
-                        vals
-                    )
+                if modo == "atualizar" and rip and rip in rips_existentes:
+                    set_clause = ", ".join([f"{c}=?" for c in COLUNAS_BD if c != "rip"])
+                    v_list = [vals[c] for c in COLUNAS_BD if c != "rip"] + [rip]
+                    cursor.execute(f"UPDATE imoveis SET {set_clause} WHERE rip=?", v_list)
                     atualizados += 1
                 else:
-                    # Insere novo registro
-                    cols = ", ".join(COLUNAS_ESPERADAS)
-                    placeholders = ", ".join(["?"] * len(COLUNAS_ESPERADAS))
-                    vals = [valores[col] for col in COLUNAS_ESPERADAS]
-                    cursor.execute(
-                        f"INSERT INTO imoveis ({cols}) VALUES ({placeholders})",
-                        vals
-                    )
+                    cols = ", ".join(COLUNAS_BD)
+                    ph = ", ".join(["?"] * len(COLUNAS_BD))
+                    cursor.execute(f"INSERT INTO imoveis ({cols}) VALUES ({ph})",
+                                   [vals[c] for c in COLUNAS_BD])
                     novos += 1
                     if rip:
                         rips_existentes.add(rip)
@@ -200,72 +140,31 @@ def importar_excel(arquivo_bytes, nome_arquivo, modo='atualizar'):
                 ignorados += 1
                 resultado["erros"].append(str(e))
 
-        # Registra importação no histórico
         cursor.execute(
-            "INSERT INTO importacoes (arquivo, total_registros, novos_registros) VALUES (?, ?, ?)",
+            "INSERT INTO importacoes (arquivo, total_registros, novos_registros) VALUES (?,?,?)",
             (nome_arquivo, len(df), novos)
         )
-
         conn.commit()
         conn.close()
 
-        resultado["sucesso"] = True
-        resultado["novos_registros"] = novos
-        resultado["atualizados"] = atualizados
-        resultado["ignorados"] = ignorados
-        resultado["mensagem"] = (
-            f"✅ Importação concluída! "
-            f"{novos} novos | {atualizados} atualizados | {ignorados} ignorados"
-        )
+        resultado.update({
+            "sucesso": True,
+            "novos_registros": novos,
+            "atualizados": atualizados,
+            "ignorados": ignorados,
+            "mensagem": f"✅ {novos} novos | {atualizados} atualizados | {ignorados} ignorados"
+        })
 
     except Exception as e:
-        resultado["mensagem"] = f"❌ Erro durante importação: {str(e)}"
+        resultado["mensagem"] = f"❌ Erro: {str(e)}"
         resultado["erros"].append(str(e))
 
     return resultado
 
 
 def detectar_colunas_excel(arquivo_bytes):
-    """
-    Lê apenas o cabeçalho do Excel para mostrar colunas detectadas.
-    """
     try:
-        df = pd.read_excel(arquivo_bytes, engine='openpyxl', nrows=0)
+        df = pd.read_excel(arquivo_bytes, engine="openpyxl", nrows=0)
         return list(df.columns)
-    except Exception as e:
+    except Exception:
         return []
-
-
-def gerar_planilha_modelo():
-    """Gera uma planilha modelo para o usuário preencher."""
-    colunas_modelo = [
-        "TOTAL", "Nº SUEST", "RIP", "RIP UTILIZAÇÃO",
-        "valor terreno", "valor benfeitoria", "total",
-        "ESTADO", "cod.municipio", "MUNICIPIO", "ENDEREÇO",
-        "Área Terreno", "Área Construída", "PROPRIEDADE",
-        "ocupação", "OBS1", "PROCESSO", "OBS5"
-    ]
-    df_modelo = pd.DataFrame(columns=colunas_modelo)
-    # Adiciona linha de exemplo
-    exemplo = {
-        "TOTAL": "1",
-        "Nº SUEST": "SR-XX",
-        "RIP": "0000.0000.000.0",
-        "RIP UTILIZAÇÃO": "USO",
-        "valor terreno": 100000.00,
-        "valor benfeitoria": 50000.00,
-        "total": 150000.00,
-        "ESTADO": "SP",
-        "cod.municipio": "3550308",
-        "MUNICIPIO": "SÃO PAULO",
-        "ENDEREÇO": "RUA EXEMPLO, 100",
-        "Área Terreno": 500.00,
-        "Área Construída": 200.00,
-        "PROPRIEDADE": "PRÓPRIO NACIONAL",
-        "ocupação": "OCUPADO",
-        "OBS1": "",
-        "PROCESSO": "00000.000000/0000-00",
-        "OBS5": ""
-    }
-    df_modelo = pd.concat([df_modelo, pd.DataFrame([exemplo])], ignore_index=True)
-    return df_modelo
